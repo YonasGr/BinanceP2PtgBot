@@ -24,12 +24,16 @@ if not BOT_TOKEN:
     exit(1)
 
 # URLs for API endpoints
+# Note: The Binance P2P API is unofficial and may change in the future.
 BINANCE_P2P_URL = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
 COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price'
+COINGECKO_COIN_URL = 'https://api.coingecko.com/api/v3/coins/'
 
 # Helper function to format numbers with commas for readability
 def format_number(value):
     try:
+        if value is None:
+            return 'N/A'
         return f'{float(value):,.2f}'
     except (ValueError, TypeError):
         return value
@@ -58,7 +62,7 @@ def get_p2p_data(amount, trade_type):
         response = requests.post(BINANCE_P2P_URL, data=json.dumps(payload), headers=headers)
         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
         return response.json()
-    except requests.exceptions.RequestException as e:
+    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
         logger.error(f"Error fetching Binance P2P data: {e}")
         return None
 
@@ -246,7 +250,7 @@ async def coin_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Fetching information for {coin_symbol.upper()}... Please wait.")
 
         # Use CoinGecko for comprehensive coin information, including market cap
-        coin_url = f"https://api.coingecko.com/api/v3/coins/{coin_symbol}"
+        coin_url = f"{COINGECKO_COIN_URL}{coin_symbol}"
         response = requests.get(coin_url)
         response.raise_for_status()
         data = response.json()
