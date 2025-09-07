@@ -5,9 +5,7 @@
 
 A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conversions**, and **coin info** with charts, all in **ETB** or other currencies. Works in **inline mode** and in **groups**.  
 
----
-
-## 🚀 Features
+🚀 Features
 
 - `/start` – Shows all available commands and usage tips.  
 - `/p2p` – Fetches the **top 10 general P2P rates** for USDT → ETB.  
@@ -18,9 +16,7 @@ A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conve
 - Fully supports **inline mode**: users can call `@binancep2pETBbot` from anywhere in Telegram.  
 - Group-friendly: works in **Telegram groups** without needing admin privileges (optional).  
 
----
-
-## 📷 Demo
+📷 Demo
 
 ![Bot Demo](assets/p2pdemo.png)  
 *Example showing `/sell 50 usdt etb` and `/coin BTC` outputs.*
