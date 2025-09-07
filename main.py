@@ -1,35 +1,34 @@
-# main.py
 import os
 import requests
 import json
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+import asyncio
+import matplotlib.pyplot as plt
+import io
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InputMediaPhoto
+from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
+from dotenv import load_dotenv
+from uuid import uuid4
 
-# Set up logging to catch any errors and keep track of events
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- Configuration & Setup ---
-
-# Load the Telegram bot token from an environment variable for security.
-# This is crucial for deployment on platforms like Render.
+load_dotenv()
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# Check if the token is available
 if not BOT_TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN environment variable is not set. The bot cannot start.")
     exit(1)
 
-# URLs for API endpoints
-# Note: The Binance P2P API is unofficial and may change in the future.
 BINANCE_P2P_URL = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search'
-COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price'
+COINGECKO_COINS_LIST_URL = 'https://api.coingecko.com/api/v3/coins/list'
 COINGECKO_COIN_URL = 'https://api.coingecko.com/api/v3/coins/'
 
-# Helper function to format numbers with commas for readability
+coin_list_cache = {}
+last_updated = 0
+
 def format_number(value):
     try:
         if value is None:
@@ -38,7 +37,10 @@ def format_number(value):
     except (ValueError, TypeError):
         return value
 
-# Helper function to get P2P data from Binance
+def escape_markdown(text):
+    escape_chars = '_*[]()~`>#+-=|{}.!'
+    return ''.join(['\\' + char if char in escape_chars else char for char in text])
+
 def get_p2p_data(amount, trade_type):
     payload = {
         "proMerchantAds": False,
@@ -50,51 +52,64 @@ def get_p2p_data(amount, trade_type):
         "tradeType": trade_type,
         "amount": amount
     }
-    
     headers = {
         "Accept": "*/*",
         "Accept-Encoding": "gzip, deflate, br",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0"
     }
-
     try:
         response = requests.post(BINANCE_P2P_URL, data=json.dumps(payload), headers=headers)
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status()
         return response.json()
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
         logger.error(f"Error fetching Binance P2P data: {e}")
         return None
 
-# --- Command Handlers ---
+async def get_coin_list():
+    global coin_list_cache, last_updated
+    if not coin_list_cache or (asyncio.get_running_loop().time() - last_updated > 86400):
+        try:
+            response = requests.get(COINGECKO_COINS_LIST_URL)
+            response.raise_for_status()
+            data = response.json()
+            new_cache = {coin['symbol'].lower(): coin['id'] for coin in data}
+            coin_list_cache = new_cache
+            last_updated = asyncio.get_running_loop().time()
+            logger.info("Successfully refreshed CoinGecko coin list cache.")
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            logger.error(f"Error fetching CoinGecko coin list: {e}")
+            if not coin_list_cache:
+                return None
+    return coin_list_cache
 
-# /start command
+async def get_coin_id_from_symbol(symbol):
+    if not coin_list_cache:
+        await get_coin_list()
+    return coin_list_cache.get(symbol.lower())
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends a welcome message when the /start command is issued."""
     message = (
-        "Hello! I am your personal Binance assistant bot.\n\n"
-        "Here are the commands you can use:\n"
-        "/p2p - Get the top 10 general P2P rates for USDT in ETB.\n"
-        "/p2p_amount <amount> <currency> - Get P2P rates for a specific amount. "
-        "Example: `/p2p_amount 5000 ETB` or `/p2p_amount 50 USDT`.\n"
-        "/convert <amount> <from_currency> <to_currency> - Convert crypto. "
-        "Example: `/convert 1 BTC to ETH` or `/convert 100 USDT to TON`.\n"
-        "/coin <coin_symbol> - Get real-time info about a crypto coin. "
-        "Example: `/coin BTC` or `/coin SOL`."
+        "👋 Hello! I am your Binance P2P ETB bot.\n\n"
+        "You can use me in chats or inline mode (@binancep2pETBbot).\n\n"
+        "Commands:\n\n"
+        "/p2p - Top 10 general P2P rates for USDT in ETB\n"
+        "/rate <amount> <currency> - Get top P2P rates for specific amount\n"
+        "/sell <amount> usdt etb - Calculate exact ETB amount for selling USDT\n"
+        "/convert <amount> <from_currency> <to_currency> - Convert crypto\n"
+        "/coin <coin_symbol> - Get coin info and chart\n\n"
+        "Inline Mode: Type `@binancep2pETBbot <command>` anywhere in Telegram to use all commands."
+        "\n\nInformation is fetched live from Binance P2P and CoinGecko."
+        "\n\n\nbot by @x_Jonah (channel: @Jonah-Notice)"
     )
     await update.message.reply_text(message)
 
-# /p2p command
 async def p2p_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fetches and sends general P2P rates."""
-    await update.message.reply_text("Fetching the top 10 P2P rates for USDT... Please wait a moment.")
-    
+    await update.message.reply_text("Fetching top 10 P2P rates for USDT... Please wait.")
     data = get_p2p_data(None, "BUY")
-    
-    if not data or 'data' not in data or not data['data']:
-        await update.message.reply_text("Sorry, I could not fetch the P2P rates at this time. Please try again later.")
+    if not data or "data" not in data or not data["data"]:
+        await update.message.reply_text("Could not fetch P2P rates at this time.")
         return
-
     rates_message = "--- **Current Top P2P Rates (Buy USDT)** ---\n\n"
     for i, ad in enumerate(data['data'][:10]):
         rate = ad['adv']['price']
@@ -103,51 +118,28 @@ async def p2p_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         merchant_name = ad['advertiser']['nickName']
         orders = ad['advertiser']['monthOrderCount']
         completion_rate = ad['advertiser']['monthFinishRate']
-
         rates_message += (
-            f"**{i+1}. {merchant_name}**\n"
+            f"**{i+1}. {escape_markdown(merchant_name)}**\n"
             f"  `Rate:` {format_number(rate)} ETB\n"
             f"  `Available:` {format_number(min_trade)} - {format_number(max_trade)} ETB\n"
-            f"  `Orders:` {orders} ({round(float(completion_rate) * 100, 2)}%)\n\n"
+            f"  `Orders:` {orders} ({round(float(completion_rate)*100,2)}%)\n\n"
         )
-    
     await update.message.reply_text(rates_message, parse_mode='Markdown')
 
-# /p2p_amount command
-async def p2p_amount_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fetches P2P rates for a specific amount."""
+async def rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         args = context.args
         if len(args) < 2:
-            await update.message.reply_text("Please provide an amount and currency. Example: `/p2p_amount 5000 ETB` or `/p2p_amount 50 USDT`")
+            await update.message.reply_text("Usage: /rate <amount> <currency>")
             return
-
         amount = float(args[0])
         currency = args[1].upper()
-        
-        trade_type = "BUY" # Default to buy
-        
-        await update.message.reply_text(f"Fetching P2P rates for {format_number(amount)} {currency}... Please wait.")
-
-        # If the user provides an amount in ETB, we can search by that.
-        # Otherwise, assume it's a USDT amount and convert it to ETB using a rough estimate.
-        if currency == "ETB":
-            data = get_p2p_data(amount, trade_type)
-        else:
-            # We need a rough estimate to search by amount, so we'll get the general rate first
-            general_data = get_p2p_data(None, trade_type)
-            if not general_data or not general_data['data']:
-                 await update.message.reply_text("Could not get a base rate for conversion. Please try again later.")
-                 return
-            estimated_rate = float(general_data['data'][0]['adv']['price'])
-            amount_in_etb = amount * estimated_rate
-            data = get_p2p_data(amount_in_etb, trade_type)
-        
-        if not data or 'data' not in data or not data['data']:
-            await update.message.reply_text(f"No P2P offers found for {format_number(amount)} {currency}.")
+        trade_type = "BUY"
+        data = get_p2p_data(amount, trade_type)
+        if not data or "data" not in data or not data["data"]:
+            await update.message.reply_text(f"No P2P offers found for {amount} {currency}.")
             return
-
-        rates_message = f"--- **Top P2P Rates for {format_number(amount)} {currency}** ---\n\n"
+        message = f"--- **Top P2P Rates for {amount} {currency}** ---\n\n"
         for i, ad in enumerate(data['data'][:10]):
             rate = ad['adv']['price']
             min_trade = ad['adv']['minSingleTransAmount']
@@ -155,141 +147,268 @@ async def p2p_amount_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             merchant_name = ad['advertiser']['nickName']
             orders = ad['advertiser']['monthOrderCount']
             completion_rate = ad['advertiser']['monthFinishRate']
-
-            rates_message += (
-                f"**{i+1}. {merchant_name}**\n"
+            message += (
+                f"**{i+1}. {escape_markdown(merchant_name)}**\n"
                 f"  `Rate:` {format_number(rate)} ETB\n"
                 f"  `Available:` {format_number(min_trade)} - {format_number(max_trade)} ETB\n"
-                f"  `Orders:` {orders} ({round(float(completion_rate) * 100, 2)}%)\n\n"
+                f"  `Orders:` {orders} ({round(float(completion_rate)*100,2)}%)\n\n"
             )
-        
-        await update.message.reply_text(rates_message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Error in /rate: {e}")
+        await update.message.reply_text("⚠️ Error fetching P2P rates.")
 
-    except (ValueError, IndexError):
-        await update.message.reply_text("Invalid input. Please provide a valid number and currency. Example: `/p2p_amount 5000 ETB`")
-
-# /convert command
-async def convert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Converts a crypto amount from one currency to another."""
+async def sell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        args = context.args
-        if len(args) != 3:
-            await update.message.reply_text("Invalid format. Example: `/convert 1 BTC to ETH`")
+        if len(context.args) != 3:
+            await update.message.reply_text("Usage: /sell <amount> usdt etb")
             return
-        
-        amount = float(args[0])
-        from_coin = args[1].lower()
-        to_coin = args[2].lower()
-        
-        await update.message.reply_text(f"Converting {amount} {from_coin.upper()} to {to_coin.upper()}... Please wait.")
+        amount = float(context.args[0])
+        from_currency = context.args[1].lower()
+        to_currency = context.args[2].lower()
+        if from_currency != "usdt" or to_currency != "etb":
+            await update.message.reply_text("Currently only USDT → ETB is supported.")
+            return
+        data = get_p2p_data(amount, "SELL")
+        if not data or "data" not in data or len(data["data"]) < 6:
+            await update.message.reply_text("Could not fetch enough P2P offers right now.")
+            return
+        # Skip first 5 offers, take 6th as safest rate
+        best_offer = data["data"][5]
+        rate = float(best_offer["adv"]["price"])
+        merchant_name = best_offer["advertiser"]["nickName"]
+        completion_rate = float(best_offer["advertiser"]["monthFinishRate"]) * 100
+        orders = best_offer["advertiser"]["monthOrderCount"]
+        total_etb = amount * rate
+        message = (
+            f"💱 Best P2P Rate for {amount} USDT → ETB\n\n"
+            f"1 USDT = {format_number(rate)} ETB\n"
+            f"{amount} USDT = {format_number(total_etb)} ETB\n\n"
+            f"👤 Seller: {escape_markdown(merchant_name)}\n"
+            f"📊 Orders: {orders}, Completion: {completion_rate:.2f}%"
+        )
+        await update.message.reply_text(message, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in /sell: {e}")
+        await update.message.reply_text("⚠️ Error while fetching P2P conversion.")
 
-        # Check if one of the coins is a stablecoin like USDT to simplify the conversion logic
-        if from_coin == 'usdt':
-            params = {
-                "ids": to_coin,
-                "vs_currencies": from_coin
-            }
-        elif to_coin == 'usdt':
-            params = {
-                "ids": from_coin,
-                "vs_currencies": to_coin
-            }
-        else:
-            # For non-stablecoin conversions, we'll convert both to USDT first
-            params = {
-                "ids": f"{from_coin},{to_coin}",
-                "vs_currencies": "usdt"
-            }
-        
-        response = requests.get(COINGECKO_URL, params=params)
+async def convert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if len(context.args) != 3:
+            await update.message.reply_text("Usage: /convert <amount> <from_currency> <to_currency>")
+            return
+        amount = float(context.args[0])
+        from_currency = context.args[1].lower()
+        to_currency = context.args[2].lower()
+        from_id = await get_coin_id_from_symbol(from_currency)
+        to_id = await get_coin_id_from_symbol(to_currency)
+        if not from_id or not to_id:
+            await update.message.reply_text(f"Could not find coins {from_currency.upper()} or {to_currency.upper()}")
+            return
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        params = {"ids": f"{from_id},{to_id}", "vs_currencies": "usd"}
+        response = requests.get(url, params=params)
         response.raise_for_status()
-        data = response.json()
-
-        if not data:
-            await update.message.reply_text("Could not find one or both of the coins. Please check the symbols.")
+        prices = response.json()
+        from_rate_usd = prices.get(from_id, {}).get("usd")
+        to_rate_usd = prices.get(to_id, {}).get("usd")
+        if from_rate_usd is None or to_rate_usd is None:
+            await update.message.reply_text("Price data not available.")
             return
-
-        if from_coin == 'usdt':
-            to_rate = data.get(to_coin, {}).get(from_coin, None)
-            if to_rate is None:
-                await update.message.reply_text(f"Could not get the price for {to_coin.upper()}.")
-                return
-            result = amount / to_rate
-            message = f"{format_number(amount)} {from_coin.upper()} is equal to {format_number(result)} {to_coin.upper()}"
-        elif to_coin == 'usdt':
-            from_rate = data.get(from_coin, {}).get(to_coin, None)
-            if from_rate is None:
-                await update.message.reply_text(f"Could not get the price for {from_coin.upper()}.")
-                return
-            result = amount * from_rate
-            message = f"{format_number(amount)} {from_coin.upper()} is equal to {format_number(result)} {to_coin.upper()}"
-        else:
-            from_rate_usdt = data.get(from_coin, {}).get('usdt', None)
-            to_rate_usdt = data.get(to_coin, {}).get('usdt', None)
-            
-            if from_rate_usdt is None or to_rate_usdt is None:
-                await update.message.reply_text("Could not get conversion rates for one or both coins.")
-                return
-            
-            result = (amount * from_rate_usdt) / to_rate_usdt
-            message = f"{format_number(amount)} {from_coin.upper()} is equal to {format_number(result)} {to_coin.upper()}"
-
+        result = (amount * from_rate_usd) / to_rate_usd
+        rate_from_to = from_rate_usd / to_rate_usd
+        rate_to_from = to_rate_usd / from_rate_usd
+        message = (
+            f"{amount} {from_currency.upper()} ≈ {result:.6f} {to_currency.upper()}\n\n"
+            f"1 {from_currency.upper()} ≈ {rate_from_to:.6f} {to_currency.upper()}\n"
+            f"1 {to_currency.upper()} ≈ {rate_to_from:.6f} {from_currency.upper()}"
+        )
         await update.message.reply_text(message)
+    except Exception as e:
+        logger.error(f"Error in /convert: {e}")
+        await update.message.reply_text("⚠️ Error while converting.")
 
-    except (ValueError, IndexError):
-        await update.message.reply_text("Invalid input. Please provide a valid amount and coin symbols. Example: `/convert 1 BTC to ETH`")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching CoinGecko data: {e}")
-        await update.message.reply_text("There was an error while trying to fetch the conversion rate. Please try again later.")
-
-# /coin command
-async def coin_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fetches and displays information about a specific crypto coin."""
+async def coin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         coin_symbol = context.args[0].lower()
-        await update.message.reply_text(f"Fetching information for {coin_symbol.upper()}... Please wait.")
-
-        # Use CoinGecko for comprehensive coin information, including market cap
-        coin_url = f"{COINGECKO_COIN_URL}{coin_symbol}"
+        coin_id = await get_coin_id_from_symbol(coin_symbol)
+        if not coin_id:
+            await update.message.reply_text(f"Could not find information for {coin_symbol.upper()}.")
+            return
+        await update.message.reply_text(f"Fetching information for {coin_symbol.upper()}...")
+        coin_url = f"{COINGECKO_COIN_URL}{coin_id}"
         response = requests.get(coin_url)
         response.raise_for_status()
         data = response.json()
-        
+        chart_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+        chart_params = {"vs_currency": "usd", "days": "7"}
+        chart_response = requests.get(chart_url, params=chart_params)
+        chart_response.raise_for_status()
+        chart_data = chart_response.json()
+        prices = [p[1] for p in chart_data["prices"]]
+        times = [p[0] for p in chart_data["prices"]]
+        plt.figure(figsize=(8, 4))
+        plt.plot(times, prices, color="blue")
+        plt.title(f"{data['name']} (7D Price in USD)")
+        plt.xlabel("Time")
+        plt.ylabel("Price (USD)")
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
         name = data.get('name', 'N/A')
         symbol = data.get('symbol', 'N/A').upper()
         market_cap_usd = data.get('market_data', {}).get('market_cap', {}).get('usd', 'N/A')
         current_price_usd = data.get('market_data', {}).get('current_price', {}).get('usd', 'N/A')
         price_change_24h = data.get('market_data', {}).get('price_change_percentage_24h', 'N/A')
-        
         info_message = (
-            f"--- **{name} ({symbol})** ---\n"
+            f"--- **{escape_markdown(name)} ({escape_markdown(symbol)})** ---\n"
             f"  `Current Price:` ${format_number(current_price_usd)}\n"
             f"  `Market Cap:` ${format_number(market_cap_usd)}\n"
             f"  `24h Change:` {format_number(price_change_24h)}%\n"
             "  *Data provided by CoinGecko.*"
         )
+        await update.message.reply_photo(photo=buf, caption=info_message, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Error in /coin: {e}")
+        await update.message.reply_text("Error fetching coin info.")
 
-        await update.message.reply_text(info_message, parse_mode='Markdown')
+# ----------------- INLINE QUERY HANDLER -----------------
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query
+    results = []
 
-    except (IndexError, requests.exceptions.RequestException):
-        await update.message.reply_text("Invalid command. Please provide a valid coin symbol. Example: `/coin BTC`")
-    except json.JSONDecodeError:
-        await update.message.reply_text("Could not find information for that coin. Please check the symbol.")
+    if not query:
+        return
+
+    args = query.split()
+    cmd = args[0].lower()
+    args_only = args[1:]
+
+    # /p2p
+    if cmd == "p2p":
+        data = get_p2p_data(None, "BUY")
+        if data and "data" in data:
+            text = "--- Top 10 P2P Rates (Buy USDT) ---\n\n"
+            for i, ad in enumerate(data["data"][:10]):
+                rate = ad['adv']['price']
+                merchant_name = ad['advertiser']['nickName']
+                text += f"{i+1}. {escape_markdown(merchant_name)}: {format_number(rate)} ETB\n"
+            results.append(InlineQueryResultArticle(
+                id=str(uuid4()), title="Top P2P Rates", input_message_content=InputTextMessageContent(text)
+            ))
+
+    # /rate
+    elif cmd == "rate" and len(args_only) == 2:
+        amount = float(args_only[0])
+        currency = args_only[1].upper()
+        data = get_p2p_data(amount, "BUY")
+        if data and "data" in data:
+            text = f"--- Top P2P Rates for {amount} {currency} ---\n\n"
+            for i, ad in enumerate(data["data"][:10]):
+                rate = ad['adv']['price']
+                merchant_name = ad['advertiser']['nickName']
+                text += f"{i+1}. {escape_markdown(merchant_name)}: {format_number(rate)} ETB\n"
+            results.append(InlineQueryResultArticle(
+                id=str(uuid4()), title=f"P2P Rates for {amount} {currency}",
+                input_message_content=InputTextMessageContent(text)
+            ))
+
+    # /sell
+    elif cmd == "sell" and len(args_only) == 3:
+        amount = float(args_only[0])
+        from_currency = args_only[1].lower()
+        to_currency = args_only[2].lower()
+        if from_currency == "usdt" and to_currency == "etb":
+            data = get_p2p_data(amount, "SELL")
+            if data and "data" in data and len(data["data"]) >= 6:
+                best_offer = data["data"][5]
+                rate = float(best_offer["adv"]["price"])
+                total_etb = amount * rate
+                text = f"{amount} USDT → {format_number(total_etb)} ETB (1 USDT={format_number(rate)} ETB)"
+                results.append(InlineQueryResultArticle(
+                    id=str(uuid4()), title=f"Sell {amount} USDT", input_message_content=InputTextMessageContent(text)
+                ))
+
+    # /convert
+    elif cmd == "convert" and len(args_only) == 3:
+        amount = float(args_only[0])
+        from_currency = args_only[1].lower()
+        to_currency = args_only[2].lower()
+        from_id = await get_coin_id_from_symbol(from_currency)
+        to_id = await get_coin_id_from_symbol(to_currency)
+        if from_id and to_id:
+            url = "https://api.coingecko.com/api/v3/simple/price"
+            params = {"ids": f"{from_id},{to_id}", "vs_currencies": "usd"}
+            response = requests.get(url, params=params)
+            prices = response.json()
+            from_rate_usd = prices.get(from_id, {}).get("usd")
+            to_rate_usd = prices.get(to_id, {}).get("usd")
+            if from_rate_usd and to_rate_usd:
+                result = (amount * from_rate_usd) / to_rate_usd
+                text = f"{amount} {from_currency.upper()} ≈ {result:.6f} {to_currency.upper()}"
+                results.append(InlineQueryResultArticle(
+                    id=str(uuid4()), title=f"Convert {amount} {from_currency.upper()} → {to_currency.upper()}",
+                    input_message_content=InputTextMessageContent(text)
+                ))
+
+    # /coin
+    elif cmd == "coin" and len(args_only) == 1:
+        coin_symbol = args_only[0].lower()
+        coin_id = await get_coin_id_from_symbol(coin_symbol)
+        if coin_id:
+            coin_url = f"{COINGECKO_COIN_URL}{coin_id}"
+            response = requests.get(coin_url)
+            data = response.json()
+            chart_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+            chart_params = {"vs_currency": "usd", "days": "7"}
+            chart_response = requests.get(chart_url, params=chart_params)
+            chart_data = chart_response.json()
+            prices = [p[1] for p in chart_data["prices"]]
+            times = [p[0] for p in chart_data["prices"]]
+            plt.figure(figsize=(8, 4))
+            plt.plot(times, prices, color="blue")
+            plt.title(f"{data['name']} (7D Price in USD)")
+            plt.xlabel("Time")
+            plt.ylabel("Price (USD)")
+            plt.tight_layout()
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png")
+            buf.seek(0)
+            plt.close()
+            media = InputMediaPhoto(buf, caption=f"{data['name']} ({data['symbol'].upper()}) 7D chart")
+            results.append(InlineQueryResultArticle(
+                id=str(uuid4()), title=f"{data['name']} Chart",
+                input_message_content=InputTextMessageContent(f"{data['name']} Chart (7D)")
+            ))
+
+    if results:
+        await update.inline_query.answer(results, cache_time=5)
 
 def main():
-    """Start the bot."""
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Add command handlers
+    # Load CoinGecko coin list before starting
+    asyncio.get_event_loop().run_until_complete(get_coin_list())
+
+    # Normal command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("p2p", p2p_command))
-    application.add_handler(CommandHandler("p2p_amount", p2p_amount_command))
+    application.add_handler(CommandHandler("rate", rate_command))
+    application.add_handler(CommandHandler("sell", sell_command))
     application.add_handler(CommandHandler("convert", convert_command))
-    application.add_handler(CommandHandler("coin", coin_info_command))
+    application.add_handler(CommandHandler("coin", coin_command))
 
-    # Run the bot with polling
-    logger.info("Starting bot...")
+    # Inline query handler
+    application.add_handler(InlineQueryHandler(inline_query))
+
+    logger.info("Starting bot in normal + inline mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
+
+
+
