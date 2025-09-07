@@ -1,7 +1,10 @@
 ````markdown
 # Binance P2P ETB Bot 🤖💱
 
-![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram) ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python) ![Requests](https://img.shields.io/badge/Requests-2.31.0-orange) ![Matplotlib](https://img.shields.io/badge/Matplotlib-3.9.1-purple)  
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)
+[![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
+[![Requests](https://img.shields.io/badge/Requests-2.31.0-orange)
+{![Matplotlib](https://img.shields.io/badge/Matplotlib-3.9.1-purple)
 
 A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conversions**, and **coin info** with charts, all in **ETB** or other currencies. Works in **inline mode** and in **groups**.  
 
