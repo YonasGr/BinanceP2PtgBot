@@ -93,4 +93,3 @@ Bot will reply with **the best current ETB value** automatically.
 * **Inline mode:** The bot works anywhere in Telegram if the user mentions `@binancep2pETBbot`.
 * **Rate Selection:** The `/sell` command automatically skips unreliable top Binance P2P offers.
 * **CoinGecko integration:** Supports **all cryptocurrencies** listed on CoinGecko for `/convert` and `/coin`.
-```
