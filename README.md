@@ -27,7 +27,7 @@ A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conve
 
 1. **Clone the repository**:  
 ```bash
-git clone https://github.com/yourusername/binance-p2p-etb-bot.git
+git clone https://github.com/YonasGr/BinanceP2PtgBot.git
 cd binance-p2p-etb-bot
 ````
 
