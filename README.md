@@ -6,7 +6,7 @@
 [![Matplotlib](https://img.shields.io/badge/Matplotlib-3.9.1-purple?logo=matplotlib)](https://matplotlib.org/)
 
 
-A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conversions**, and **coin info** with charts, all in **ETB** or other currencies. Works in **inline mode** and in **groups**.
+A **Telegram bot** that provides real-time **Binance P2P rates**, **crypto conversions**, and **coin info** with charts, all in **ETB** or other currencies. Works in **inline mode** and in **groups**. you can check out the working bot at @binancep2pETBbot
 
 ---
 
