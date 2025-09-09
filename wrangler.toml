@@ -1,8 +1,6 @@
 name = "BinanceP2PtgBot"
-main = "main.py"
+main = "main.py"  # adjust if your entry file differs
+compatibility_date = "2024-09-09"
 
-compatibility_date = "2025-09-10"
-compatibility_flags = ["python_workers"]
-
-[build]
-command = "pip install -r requirements.txt"
+[compatibility_flags]
+  python_workers = true
